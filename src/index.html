@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+  <style>
+  	body {
+  		background: #222;
+  		font: 14px Helvetica, Arial, sans-serif;
+  		margin: 30px;
+  		line-height: 1.2em;
+  		color: #CCC;
+  		text-shadow: 0px 2px 1px #000;
+  	}
+  	h1 {
+  		font-weight: 100;
+  		font-size: 22px;
+  		color: #e42b5a;
+  		margin: 1.5em 0;
+  	}
+  	a {
+  		text-decoration: none;
+  		color: #e42b5a;
+  		border-bottom: 1px solid #e42b5a;
+  	}
+  	a:hover {
+  		color: #FFF;
+  		border-bottom: 1px solid #FFF;
+  	}
+  	input{
+  		background: #333;
+  		padding: 0.5em;
+  		outline: none;
+  		border: none;
+  		color: #ccc;
+  		font: 14px Helvetica, Arial, sans-serif;
+  		margin-right: 2em;
+  	}
+  	input[type="number"]{
+  		border: 3px solid #333;
+  		width: 3em;
+  	}
+  	label {
+  		margin: 10px 0;
+  	}
+  	#json {
+			background: #333;
+			color: #999;
+			padding: 20px;
+			margin: 0;
+  		text-shadow: none;
+  		font-family: monospace;
+  		border: 1px solid #333;
+  	}
+  	#json.error {
+  		color: #e42b5a;
+  		border: 1px solid #e42b5a;
+  	}
+  	#json b{
+  		color: #ccc;
+  		font-weight: normal;
+  	}
+  	.hide {
+  		display: none;
+  	}
+  </style>
+  <script src="binarymanager.js"></script>
+
+  </head>
+  <body onload="setup()">
+  <h1>Convert <a href="http://aframe.io/a-painter" target="_blank">A-Painter</a> .apa binary files into JSON</h1>
+  <label>Select (or drag) an .APA file:</label>
+  <input type="file" id="inputfile" onchange="convert()" disabled>
+  <label>Precision:</label>
+  <input type="number" id="precision" value="5" onchange="convert()" min="0" max="16" disabled>
+  <a href="#" onclick="help()">Help</a>
+	<p>
+		<a href="#" class="hide" id="seltext" onclick="selectText('json')">Select Text</a>
+		<blockquote id="json" class="hide">No file selected</blockquote>
+	</p>
+
+  <script>
+  var VERSION = 1;
+  var helpVisible = false;
+  var json = '';
+  function setup() {
+  	window.$ = function (id) { return document.getElementById(id); };
+  	$('inputfile').disabled = false;
+  	$('precision').disabled = false;
+  }
+
+  function error (msg) {
+  	var output = $('json');
+  	if (output['innerText']) output.innerText = msg; else output.textContent = msg;
+  	output.className = 'error';
+  }
+
+  function print (msg) {
+  }
+
+  function help () {
+  	if (helpVisible) {
+  		helpVisible = false;
+  		$('json').innerHTML = json;
+  		return;
+  	}
+
+  	var str = ('\
+  	{<br>\
+  		_<b>version</b>: "apainter'+VERSION+'",<br>\
+  		_<b>brushes</b>: string [],<br>\
+  		_<b>strokes</b>: {<br>\
+  			__<b>brush</b>: int<br>\
+  			__<b>color</b>: {r: float, g: float, b: float}<br>\
+  			__<b>size</b>: float<br>\
+  			__<b>points</b>: {<br>\
+  				___<b>pos</b>: {x: float, y: float, z: float}, //controller position<br>\
+  				___<b>ori</b>: {x: float, y: float, z: float, w: float}, //orientation quaternion<br>\
+  				___<b>ptr</b>: {x: float, y: float, z: float},  //tip position<br>\
+  				___<b>prs</b>: float, //pressure<br>\
+  				___<b>t</b>  : int  //timestamp <br>\
+  		__}[]<br>\
+  		_}[]<br>\
+  	}<br><br>\
+  	<a href="#">Read more about all this</a>');
+  	$('json').innerHTML = str.replace(/_/g, '&nbsp;&nbsp;&nbsp;');
+  	$('json').className = '';
+		$('seltext').className = '';
+		helpVisible = true;
+  }
+
+  function convert () {
+  	if (typeof window.FileReader !== 'function') {
+		  error("This browser does not support File API");
+		  return;
+		}
+
+		var inputfile = $('inputfile').files[0];
+		if (!inputfile) return;
+
+		$('json').innerHTML = 'Converting...';
+		$('json').className = '';
+		$('seltext').className = '';
+
+		var reader = new FileReader();
+
+		reader.onload = function () { 
+			var apa = loadBinary(reader.result);
+  		var output = $('json');
+  		if (apa) {
+  			output.innerHTML = json = JSON.stringify(apa);
+  			output.className = '';
+  		}
+		};
+		reader.readAsArrayBuffer(inputfile)
+  }
+
+
+  function loadBinary (buffer) {
+  	var precision = Math.min(16, Math.max(0, $('precision').value));
+  	precision = Number('1' + new Array(precision).fill(0).join(''));
+    var binaryManager = new BinaryManager(buffer);
+    var magic = binaryManager.readString();
+    if (magic !== 'apainter') {
+      error('Invalid `magic` header. This doesn\'t look like an A-Painter .apa file');
+      return null;
+    }
+
+    var version = binaryManager.readUint16();
+    if (version !== VERSION) {
+      error('Invalid version: ' + version + '(Expected: ' + VERSION + ')');
+    }
+
+    var json = {
+    	version: magic+version,
+    	brushes: [],
+    	strokes: []
+    };
+
+    var numUsedBrushes = binaryManager.readUint8();
+    for (var b = 0; b < numUsedBrushes; b++) {
+      json.brushes.push(binaryManager.readString());
+    }
+
+    var numStrokes = binaryManager.readUint32();
+
+    for (var l = 0; l < numStrokes; l++) {
+      var brushIndex = binaryManager.readUint8();
+      var color = setPrecision(binaryManager.readColor(), precision);
+      var size = setPrecision(binaryManager.readFloat(), precision);
+      var numPoints = binaryManager.readUint32();
+
+      var stroke = {
+      	brush: brushIndex, 
+      	color: color, 
+      	size: size,
+      	points: []
+      };
+
+      for (var i = 0; i < numPoints; i++) {
+        var position = binaryManager.readVector3();
+        var orientation = binaryManager.readQuaternion();
+        var pressure = setPrecision(binaryManager.readFloat(), precision);
+        var timestamp = binaryManager.readUint32();
+
+        var pointerPosition = getPointerPosition(position, orientation);
+
+        setPrecision(position, precision);
+        setPrecision(orientation, precision);
+        setPrecision(pointerPosition, precision);
+
+        stroke.points.push({
+        	pos: position, 
+        	ori: orientation, 
+        	ptr: pointerPosition, 
+        	prs: pressure, 
+        	t: timestamp
+        });
+      }
+
+      json.strokes.push(stroke);
+    }
+
+    return json;
+  }
+
+  function setPrecision(d, precision) {
+  	if (typeof d == 'number') {
+  		return Math.floor(d * precision) / precision;
+  	}
+
+  	for (var i in d){
+  		d[i]= Math.floor(d[i] * precision) / precision;
+  	}
+  	return d;
+  }
+
+	function getPointerPosition (position, orientation) {
+    var offset = {x: 0, y: 0.7, z: 1};
+    var pointer = applyQuaternion(offset, orientation);
+    pointer = normalize(pointer);
+    pointer.x *= -0.03;
+    pointer.y *= -0.03;
+    pointer.z *= -0.03;
+    position.x += pointer.x;
+    position.y += pointer.y;
+    position.z += pointer.z;
+    return position;
+  }
+
+  function normalize(v){
+  	var l = Math.sqrt( v.x * v.x + v.y * v.y + v.z * v.z );
+  	return {x: v.x / l, y: v.y / l, z: v.z / l}
+  }
+
+  //adapted from THREEJS.Vector3
+  function applyQuaternion (v, q) {
+
+		var x = v.x, y = v.y, z = v.z;
+		var qx = q.x, qy = q.y, qz = q.z, qw = q.w;
+
+		// calculate quat * vector
+
+		var ix =  qw * x + qy * z - qz * y;
+		var iy =  qw * y + qz * x - qx * z;
+		var iz =  qw * z + qx * y - qy * x;
+		var iw = - qx * x - qy * y - qz * z;
+
+		// calculate result * inverse quat
+
+		x = ix * qw + iw * - qx + iy * - qz - iz * - qy;
+		y = iy * qw + iw * - qy + iz * - qx - ix * - qz;
+		z = iz * qw + iw * - qz + ix * - qy - iy * - qx;
+
+		return v;
+	}
+
+	//http://stackoverflow.com/questions/1173194/select-all-div-text-with-single-mouse-click
+	function selectText(containerid) {
+		if (document.selection) {
+			var range = document.body.createTextRange();
+			range.moveToElementText(document.getElementById(containerid));
+			range.select();
+		} else if (window.getSelection) {
+			var range = document.createRange();
+			range.selectNode(document.getElementById(containerid));
+			window.getSelection().addRange(range);
+		}
+	}
+
+  </script>
+
+  </body>
+</html>
